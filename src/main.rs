@@ -27,7 +27,7 @@ use usbd_serial::{SerialPort, USB_CLASS_CDC};
 use cortex_m::peripheral::NVIC;
 
 // Declare alias for a mutex-protected shared object (`Mutex`) with interior mutability (`RefCell`)
-type SharedMutableType<T> = blocking_mutex::Mutex<blocking_mutex::raw::NoopRawMutex, RefCell<T>>;
+type SharedMutableType<T> = blocking_mutex::Mutex<blocking_mutex::raw::CriticalSectionRawMutex, RefCell<T>>;
 
 // Use a `OnceLock` to initialize the USB bus allocator
 // This is a `OnceLock` because we cannot statically initialize the USB bus allocator, but need to initialize it at runtime
