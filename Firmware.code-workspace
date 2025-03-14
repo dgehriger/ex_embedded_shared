@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "rust-analyzer.cargo.target": "thumbv6m-none-eabi",
+    "editor.formatOnSave": true,
+    "rust-analyzer.diagnostics.styleLints.enable": true,
+    "rust-analyzer.cargo.allTargets": false,
+    "rust-analyzer.runnables.extraArgs": ["--target=x86_64-pc-windows-msvc"]
+  }
+}

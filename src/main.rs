@@ -26,15 +26,17 @@ use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
 use cortex_m::peripheral::NVIC;
 
-static mut USB_ALLOCATOR: Option<UsbBusAllocator<UsbBus>> = None;
-static mut USB_BUS: Option<UsbDevice<UsbBus>> = None;
-
 // Declare alias for a mutex-protected shared object (`Mutex`) with interior mutability (`RefCell`)
 type SharedMutableType<T> = blocking_mutex::Mutex<blocking_mutex::raw::NoopRawMutex, RefCell<T>>;
 
-// Declare a global static variable for the USB serial port
+// Use a `OnceLock` to initialize the USB bus allocator
+// This is a `OnceLock` because we cannot statically initialize the USB bus allocator, but need to initialize it at runtime
+static USB_ALLOCATOR: once_lock::OnceLock<UsbBusAllocator<UsbBus>> = once_lock::OnceLock::new();
+
+// Declare a global static variables for the USB serial port
 // This is a `OnceLock` because we cannot statically initialize the serial port, but need to initialize it at runtime
-static mut USB_SERIAL: once_lock::OnceLock<SharedMutableType<SerialPort<UsbBus>>> = once_lock::OnceLock::new();
+static USB_BUS: once_lock::OnceLock<SharedMutableType<UsbDevice<UsbBus>>> = once_lock::OnceLock::new();
+static USB_SERIAL: once_lock::OnceLock<SharedMutableType<SerialPort<UsbBus>>> = once_lock::OnceLock::new();
 
 #[entry]
 fn main() -> ! {
@@ -53,29 +55,31 @@ fn main() -> ! {
     let usb_n = bsp::pin_alias!(pins.usb_n);
     let usb_p = bsp::pin_alias!(pins.usb_p);
 
-    let bus_allocator = unsafe {
-        USB_ALLOCATOR = Some(bsp::usb::usb_allocator(
+    let bus_allocator = {
+        let bus_allocator = bsp::usb::usb_allocator(
             peripherals.USB,
             &mut clocks,
             &mut peripherals.PM,
             usb_n.into(),
             usb_p.into(),
-        ));
-        USB_ALLOCATOR.as_ref().unwrap()
+        );
+
+        let _ = USB_ALLOCATOR.init(bus_allocator);
+        USB_ALLOCATOR.try_get().expect("USB bus allocator not initialized")
     };
 
-    unsafe {
-        USB_SERIAL.init(blocking_mutex::Mutex::new(RefCell::new(SerialPort::new(bus_allocator))));
+    // Note: in production, don't discard the Result value!
+    let usb_serial = SerialPort::new(bus_allocator);
+    let _ = USB_SERIAL.init(blocking_mutex::Mutex::new(RefCell::new(usb_serial)));
 
-        USB_BUS = Some(
-            UsbDeviceBuilder::new(bus_allocator, UsbVidPid(0x2222, 0x3333))
-                .manufacturer("Fake company")
-                .product("Serial port")
-                .serial_number("TEST")
-                .device_class(USB_CLASS_CDC)
-                .build(),
-        );
-    }
+    let usb_bus =UsbDeviceBuilder::new(bus_allocator, UsbVidPid(0x2222, 0x3333))
+        .manufacturer("Fake company")
+        .product("Serial port")
+        .serial_number("TEST")
+        .device_class(USB_CLASS_CDC)
+        .build();
+    
+    let _ = USB_BUS.init(blocking_mutex::Mutex::new(RefCell::new(usb_bus)));
 
     unsafe {
         core.NVIC.set_priority(interrupt::USB, 1);
@@ -89,24 +93,26 @@ fn main() -> ! {
         led.set_low().unwrap();
 
         // Turn off interrupts so we don't fight with the interrupt
-        cortex_m::interrupt::free(|_| unsafe {
+        cortex_m::interrupt::free(|_| 
             // Get the serial port (if initialized)
             if let Some(serial) = USB_SERIAL.try_get() {
                 // Get unique access...
                 serial.lock(|serial| {
                     // ...and mutabily borrow the serial port
                     let mut serial = serial.borrow_mut();
-                    serial.write("log line\r\n".as_bytes());
+                    let _ = serial.write("log line\r\n".as_bytes());
                 });
-            }
+            
         });
     }
 }
 
 fn poll_usb() {
-    unsafe {
-        if let Some(usb_dev) = USB_BUS.as_mut() {
-            // Get the serial port (if initialized)
+    if let Some(usb_bus) = USB_BUS.try_get() {
+        usb_bus.lock(|usb_dev| {
+            let mut usb_dev = usb_dev.borrow_mut();
+
+        // Get the serial port (if initialized)
             if let Some(serial) = USB_SERIAL.try_get() {
                 // Get unique access...
                 serial.lock(|serial| {
@@ -121,9 +127,9 @@ fn poll_usb() {
                     let _ = serial.read(&mut buf);
                 });
             }
-        
-        }
-    };
+        });
+    
+    }
 }
 
 #[interrupt]

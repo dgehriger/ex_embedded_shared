@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "probe-rs.probe-rs-debugger",
+    "zixuanwang.linkerscript",
+    "github.copilot"
+  ]
+}
